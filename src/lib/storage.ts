@@ -4,6 +4,8 @@ export interface SavedPractice {
   id: string;
   track: PracticeTrack;
   audio?: Blob;
+  audioKind?: 'original' | 'synthesized';
+  synthSignature?: string;
   image?: Blob;
   updatedAt: number;
 }

@@ -5,6 +5,8 @@ import type { AnalysisProgress, PracticeTrack } from './types';
 import { PRACTICE_TRACKS } from './music/catalog';
 import { formatTime, getChordShape, getEasyCapo, parseChord, transposeChord } from './music/theory';
 import { renderTrackAudio } from './music/synth';
+import { resolveAudioKind, synthesisSignature, trackForSynthesis } from './music/preview';
+import ComposerPreview from './components/ComposerPreview';
 import { toChordPro, toJson } from './music/exporters';
 import { analyzeAudioFile } from './audio';
 import { getLibrary, removePractice, savePractice } from './lib/storage';
@@ -76,6 +78,9 @@ export default function App() {
   const [originalTrack, setOriginalTrack] = useState<PracticeTrack | null>(null);
   const [audioUrl, setAudioUrl] = useState('');
   const [audioBlob, setAudioBlob] = useState<Blob | undefined>();
+  const [originalAudioBlob, setOriginalAudioBlob] = useState<Blob | undefined>();
+  const [audioKind, setAudioKind] = useState<'original' | 'synthesized'>('synthesized');
+  const [synthSignature, setSynthSignature] = useState('');
   const [imageUrl, setImageUrl] = useState('');
   const [imageBlob, setImageBlob] = useState<Blob | undefined>();
   const [imageZoom, setImageZoom] = useState(100);
@@ -103,12 +108,14 @@ export default function App() {
   const [history, setHistory] = useState<PracticeTrack[]>([]);
   const [composeName, setComposeName] = useState('我的练习曲');
   const [composeText, setComposeText] = useState('C Am F G\nC Am Dm G');
+  const [composeBpm, setComposeBpm] = useState(84);
   const [dictionaryChord, setDictionaryChord] = useState('C');
   const [progress, setProgress] = useState<AnalysisProgress | null>(null);
   const [analysisWarnings, setAnalysisWarnings] = useState<string[]>([]);
   const [toast, setToast] = useState('');
   const [error, setError] = useState('');
   const audioRef = useRef<HTMLAudioElement>(null);
+  const pendingPlayback = useRef<{ url: string; position: number } | null>(null);
   const metronomeContext = useRef<AudioContext | null>(null);
   const lastBeat = useRef(-1);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -118,6 +125,8 @@ export default function App() {
   const openVersion = useRef(0);
   const workingTrack = useRef(activeTrack);
   workingTrack.current = activeTrack;
+  const currentTranspose = useRef(transpose);
+  currentTranspose.current = transpose;
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const notify = useCallback((message: string) => {
@@ -140,10 +149,22 @@ export default function App() {
   useEffect(() => () => { clearTimeout(toastTimer.current); cancelAnalysis.current?.abort(); void metronomeContext.current?.close(); }, []);
   useEffect(() => () => { if (audioUrl) URL.revokeObjectURL(audioUrl); }, [audioUrl]);
   useEffect(() => () => { if (imageUrl) URL.revokeObjectURL(imageUrl); }, [imageUrl]);
+  useEffect(() => {
+    if (modal === 'compose') {
+      ++openVersion.current; pendingPlayback.current = null; setLoadingTrack(false);
+      audioRef.current?.pause();
+    }
+  }, [modal]);
+  useEffect(() => {
+    if (activeTrack && audioKind === 'synthesized' && synthSignature && synthSignature !== synthesisSignature(activeTrack, transpose)) {
+      pendingPlayback.current = null;
+      audioRef.current?.pause(); setPlaying(false);
+    }
+  }, [activeTrack, transpose, audioKind, synthSignature]);
 
   const navigate = useCallback((next: View) => {
     setView(next); setSidebarOpen(false); setError('');
-    if (next !== 'practice') { audioRef.current?.pause(); setPlaying(false); }
+    if (next !== 'practice') { ++openVersion.current; pendingPlayback.current = null; setLoadingTrack(false); audioRef.current?.pause(); setPlaying(false); }
     window.location.hash = next;
     window.scrollTo({ top: 0, behavior: 'instant' });
   }, []);
@@ -189,26 +210,28 @@ export default function App() {
     const keydown = (event: KeyboardEvent) => {
       if (event.code !== 'Space' || view !== 'practice' || modal || editing !== null || ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes((event.target as HTMLElement).tagName)) return;
       event.preventDefault();
-      const audio = audioRef.current;
-      if (!audio) return;
-      if (audio.paused) void audio.play().catch(() => notify('请点击播放按钮重试。')); else audio.pause();
+      void togglePlayback();
     };
     window.addEventListener('keydown', keydown);
     return () => window.removeEventListener('keydown', keydown);
-  }, [view, modal, editing, notify]);
+  });
 
   async function openTrack(track: PracticeTrack, existing?: SavedPractice) {
     cancelAnalysis.current?.abort();
     const version = ++openVersion.current;
     audioRef.current?.pause(); setPlaying(false); setCurrentTime(0); setTranspose(0); setCapo(0); setLoop(null); setLoopStart(null); setHistory([]); setAnalysisWarnings([]); setError('');
-    setAudioUrl(''); setImageUrl(''); setAudioBlob(undefined); setImageBlob(undefined);
+    pendingPlayback.current = null;
+    setAudioUrl(''); setImageUrl(''); setAudioBlob(undefined); setOriginalAudioBlob(undefined); setSynthSignature(''); setImageBlob(undefined);
     setActiveTrack(structuredClone(track)); setOriginalTrack(structuredClone(track)); setDuration(track.duration); navigate('practice'); setLoadingTrack(true);
     try {
       if (existing?.image) { setImageBlob(existing.image); setImageUrl(URL.createObjectURL(existing.image)); setImageZoom(100); return; }
-      const blob = existing?.audio ?? await renderTrackAudio(track);
+      const kind = existing?.audio ? resolveAudioKind(existing) : 'synthesized';
+      const blob = kind === 'original' && existing?.audio ? existing.audio : await renderTrackAudio(track);
       if (version !== openVersion.current) return;
+      setAudioKind(kind); setOriginalAudioBlob(kind === 'original' ? blob : undefined);
+      setSynthSignature(kind === 'synthesized' ? synthesisSignature(track) : '');
       setAudioBlob(blob); setAudioUrl(URL.createObjectURL(blob));
-      if (track.sourceKind === 'user' && !existing?.audio) notify('未附原音频，正在使用合成练习伴奏。');
+      if (track.sourceKind === 'user' && kind === 'synthesized') notify('伴奏已准备好，点击上方“试听和弦”听效果');
     } catch (e) { setError(e instanceof Error ? e.message : '音频准备失败，请重试。'); }
     finally { if (version === openVersion.current) setLoadingTrack(false); }
   }
@@ -224,7 +247,8 @@ export default function App() {
 
   async function saveActive() {
     if (!activeTrack) return;
-    try { await savePractice({ id: activeTrack.id, track: activeTrack, audio: audioBlob, image: imageBlob, updatedAt: Date.now() }); await refreshLibrary(); notify('曲谱和音频已保存到本机'); }
+    const validSynthesis = audioKind === 'synthesized' && synthSignature === synthesisSignature(activeTrack);
+    try { await savePractice({ id: activeTrack.id, track: activeTrack, audio: originalAudioBlob ?? (validSynthesis ? audioBlob : undefined), audioKind: originalAudioBlob ? 'original' : 'synthesized', synthSignature: originalAudioBlob ? undefined : validSynthesis ? synthSignature : undefined, image: imageBlob, updatedAt: Date.now() }); await refreshLibrary(); notify('曲谱已保存到本机，原录音和试听编配分别保留'); }
     catch (e) { notify((e as Error).message); }
   }
 
@@ -237,6 +261,8 @@ export default function App() {
       const { result, audioUrl: url } = await analyzeAudioFile(file, state => { if (cancelAnalysis.current === controller && !controller.signal.aborted) setProgress(state); }, controller.signal);
       if (controller.signal.aborted || cancelAnalysis.current !== controller || version !== openVersion.current) { URL.revokeObjectURL(url); return; }
       const track: PracticeTrack = { id: crypto.randomUUID(), title: file.name.replace(/\.[^.]+$/, ''), artist: '本机音频 · 识别草稿', description: '实验性频谱和弦识别，请试听核对后使用。', sourceKind: 'user', bpm: result.bpm, key: result.key, timeSignature: 4, duration: result.duration, segments: result.segments, color: 'lavender', difficulty: '待确认', tags: ['识别草稿'], createdAt: Date.now() };
+      pendingPlayback.current = null;
+      setAudioKind('original'); setOriginalAudioBlob(file); setSynthSignature('');
       setLoadingTrack(false); audioRef.current?.pause(); setActiveTrack(track); setOriginalTrack(structuredClone(track)); setAudioUrl(url); setAudioBlob(file); setImageUrl(''); setImageBlob(undefined); setDuration(result.duration); setCurrentTime(0); setPlaying(false); setTranspose(0); setCapo(0); setLoop(null); setLoopStart(null); setHistory([]); setAnalysisWarnings(result.warnings); setModal(null); navigate('practice'); notify('分析完成，请试听并核对和弦');
     } catch (e) { if (cancelAnalysis.current === controller) { if (!controller.signal.aborted) setError(e instanceof Error ? e.message : '音频分析失败，请尝试其他文件。'); else notify('已取消分析'); } }
     finally { if (cancelAnalysis.current === controller) { setProgress(null); cancelAnalysis.current = null; if (fileRef.current) fileRef.current.value = ''; } }
@@ -263,8 +289,67 @@ export default function App() {
   }
 
   function createTrack() {
-    try { const track = trackFromChordPro(`{title: ${composeName.replace(/[{}]/g, '')}}\n${composeText}`); setModal(null); void openTrack(track); }
+    try { const track = trackFromChordPro(`{title: ${composeName.replace(/[{}]/g, '')}}\n{tempo: ${composeBpm}}\n${composeText}`); setModal(null); void openTrack(track); }
     catch (e) { setError((e as Error).message); }
+  }
+
+  function playReadyAudio(audio: HTMLAudioElement) {
+    void audio.play().catch(() => notify('试听已准备好，请再点击一次播放按钮开始。'));
+  }
+
+  function handleAudioReady() {
+    const audio = audioRef.current;
+    if (!audio) return;
+    setDuration(audio.duration); audio.playbackRate = speed; audio.volume = volume;
+    if (pendingPlayback.current?.url === audio.src) {
+      const { position } = pendingPlayback.current; pendingPlayback.current = null;
+      if (audioKind === 'synthesized' && (!workingTrack.current || synthSignature !== synthesisSignature(workingTrack.current, currentTranspose.current))) return;
+      audio.currentTime = Math.min(position, Math.max(0, audio.duration - .05));
+      playReadyAudio(audio);
+    }
+  }
+
+  async function auditionChords() {
+    if (!activeTrack || loadingTrack) return;
+    const signature = synthesisSignature(activeTrack, transpose);
+    const audio = audioRef.current;
+    if (audioKind === 'synthesized' && synthSignature === signature && audioUrl && audio) {
+      if (!audio.paused) { audio.pause(); return; }
+      if (audio.currentTime >= duration - .05) audio.currentTime = loop?.start ?? 0;
+      playReadyAudio(audio); return;
+    }
+    const snapshot = structuredClone(activeTrack), semitones = transpose;
+    const version = ++openVersion.current;
+    audio?.pause(); setPlaying(false); setLoadingTrack(true); setError('');
+    try {
+      const blob = await renderTrackAudio(trackForSynthesis(snapshot, semitones));
+      if (version !== openVersion.current || !workingTrack.current || synthesisSignature(workingTrack.current, currentTranspose.current) !== signature) return;
+      const url = URL.createObjectURL(blob);
+      pendingPlayback.current = { url, position: loop?.start ?? 0 };
+      setAudioKind('synthesized'); setSynthSignature(signature); setAudioBlob(blob); setAudioUrl(url); setCurrentTime(loop?.start ?? 0);
+    } catch (e) { if (version === openVersion.current) setError(e instanceof Error ? e.message : '试听准备失败，请重试。'); }
+    finally { if (version === openVersion.current) setLoadingTrack(false); }
+  }
+
+  function auditionOriginal() {
+    if (!originalAudioBlob || loadingTrack) return;
+    const audio = audioRef.current;
+    if (audioKind === 'original' && audio) {
+      if (!audio.paused) audio.pause(); else playReadyAudio(audio);
+      return;
+    }
+    ++openVersion.current; audio?.pause();
+    const url = URL.createObjectURL(originalAudioBlob);
+    pendingPlayback.current = { url, position: Math.min(currentTime, duration - .05) };
+    setAudioKind('original'); setSynthSignature(''); setAudioBlob(originalAudioBlob); setAudioUrl(url);
+  }
+
+  async function togglePlayback() {
+    const audio = audioRef.current;
+    if (!audio || loadingTrack) return;
+    if (!audio.paused) { audio.pause(); return; }
+    if (audioKind === 'synthesized') await auditionChords();
+    else { if (audio.currentTime >= duration - .05) audio.currentTime = loop?.start ?? 0; playReadyAudio(audio); }
   }
 
   function seek(time: number) {
@@ -288,7 +373,7 @@ export default function App() {
     if (!Number.isFinite(start) || start < 0 || start >= segment.end || (!previous && start !== 0) || (previous && start <= previous.start)) { setError('换和弦时间需位于上一段起点与当前段终点之间；第一段从 0 秒开始。'); return; }
     const next = structuredClone(activeTrack); next.segments[editing].chord = chord; next.segments[editing].start = start;
     if (previous) next.segments[editing - 1].end = start;
-    updateTrack(next); setEditing(null); setError(''); notify('和弦已修改，原音频保持不变');
+    updateTrack(next); setEditing(null); setError(''); notify(originalAudioBlob ? '和弦已修改，点击“试听和弦”听编配，原录音保留' : '和弦已修改，点击“试听和弦”听最新效果');
   }
 
   const activeIndex = activeTrack ? activeTrack.segments.findIndex((segment, index) => currentTime >= segment.start && (currentTime < segment.end || (currentTime >= duration && index === activeTrack.segments.length - 1))) : -1;
@@ -297,6 +382,7 @@ export default function App() {
   const visibleChords = activeTrack ? [...new Set(activeTrack.segments.map(s => displayChord(s.chord)))].filter(c => c !== 'N.C.') : [];
   const foundTracks = PRACTICE_TRACKS.filter(track => (!searched || `${track.title} ${track.artist} ${track.tags.join(' ')}`.toLowerCase().includes(searched.toLowerCase())) && (filter === '全部' || (filter === '入门友好' ? track.difficulty === '入门' : track.sourceKind === 'original')));
   const saved = (id: string) => library.some(record => record.id === id);
+  const synthesisOutdated = !!activeTrack && audioKind === 'synthesized' && synthSignature !== synthesisSignature(activeTrack, transpose);
 
   function renderExternalSearch() {
     if (!searched) return null;
@@ -324,21 +410,22 @@ export default function App() {
       {view === 'chords' && <div className="page dictionary-page"><div className="page-title"><div><span className="eyebrow">ONE CHORD AT A TIME</span><h1>和弦字典</h1><p>认识一个和弦，再让手指记住它。</p></div><span className="standard-tuning"><Guitar size={17} />标准调弦 E A D G B e</span></div><div className="dictionary-layout"><section className="dictionary-list"><div className="section-heading"><h2>常用吉他和弦</h2><span className="subtle-label">{DICTIONARY.length} 个指法</span></div><div className="dictionary-grid">{DICTIONARY.map(chord => <button className={`dictionary-tile ${dictionaryChord === chord ? 'selected' : ''}`} key={chord} onClick={() => setDictionaryChord(chord)} aria-pressed={dictionaryChord === chord}><ChordDiagram chord={chord} /></button>)}</div></section><aside className="chord-detail"><span className="eyebrow">FINGERING NOTES</span><ChordDiagram chord={dictionaryChord} large /><div className="chord-legend"><span>○ 空弦</span><span>× 不弹</span><span>● 按弦</span></div><p>从左到右是六弦到一弦，<br />从上到下是琴枕到琴身。</p><div className="detail-tip"><Sparkles size={17} /><span>指尖尽量靠近品丝，慢慢拨响每一根弦，听听有没有闷音。</span></div><button className="button primary full-width" onClick={() => { setComposeName(`${dictionaryChord} 和弦练习`); setComposeText(`${dictionaryChord} ${dictionaryChord} ${dictionaryChord} ${dictionaryChord}`); setError(''); setModal('compose'); }}>用这个和弦练习 <ArrowRight size={15} /></button></aside></div></div>}
 
       {view === 'practice' && activeTrack && <div className="page practice-page"><button className="text-button back-button" onClick={() => navigate('discover')}><ArrowLeft size={15} />发现与练习</button><div className="practice-title"><div><div className="practice-title-meta"><span className="level easy">{activeTrack.tags[0] ?? '练习编配'}</span><span>{activeTrack.sourceKind === 'original' ? '弦记原创 · 可自由练习' : activeTrack.sourceKind === 'public-domain' ? '经典旋律 · 自行编配' : '用户本机文件'}</span></div><h1>{activeTrack.title}</h1><p>{activeTrack.artist}</p></div><div className="row-actions"><button className="button secondary" onClick={() => setModal('export')}><ArrowDownToLine size={16} />导出</button><button className="button primary" onClick={() => { void saveActive(); }}><Save size={16} />保存曲谱</button></div></div>
+        {!imageUrl && <section className="audition-bar" aria-label="和弦试听"><span className="audition-icon"><Headphones size={23} /></span><div><strong>先听一遍，看看和弦对不对</strong><p>{loadingTrack ? '正在准备吉他伴奏…' : synthesisOutdated ? '和弦或调性已修改，点击试听听最新效果。' : '合成吉他伴奏，用来听和弦进行，不含人声。'}</p></div><div className="audition-actions"><button className="button primary" disabled={loadingTrack} onClick={() => { void auditionChords(); }}>{loadingTrack ? <LoaderCircle size={17} className="spin" /> : playing && audioKind === 'synthesized' ? <Pause size={16} /> : <Play size={16} fill="currentColor" />}{loadingTrack ? '准备试听…' : playing && audioKind === 'synthesized' ? '暂停试听' : '试听和弦'}</button>{originalAudioBlob && <button className="button secondary" disabled={loadingTrack} onClick={auditionOriginal}>{playing && audioKind === 'original' ? <Pause size={15} /> : <Headphones size={15} />}{playing && audioKind === 'original' ? '暂停原音频' : '听原音频'}</button>}</div></section>}
         {error && <div className="error-banner" role="alert">{error}<button className="icon-button" aria-label="关闭提示" onClick={() => setError('')}><X size={16} /></button></div>}
         {imageUrl ? <section className="image-workspace"><div className="section-heading"><span><FileImage size={17} />图片谱 · 缩放查看</span><div className="row-actions"><button className="icon-button" aria-label="缩小图片谱" onClick={() => setImageZoom(Math.max(30, imageZoom - 10))}><Minus size={17} /></button><span>{imageZoom}%</span><button className="icon-button" aria-label="放大图片谱" onClick={() => setImageZoom(Math.min(250, imageZoom + 10))}><Plus size={17} /></button></div></div><div className="image-scroll"><img src={imageUrl} alt={`${activeTrack.title} 图片谱`} style={{ width: `${imageZoom}%`, maxWidth: 'none' }} /></div><p className="muted">图片谱支持查看。需要移调、播放和编辑时，请导入结构化和弦谱。</p></section> : <>
         {analysisWarnings.length > 0 && <div className="analysis-notice"><AudioLines size={18} /><div><strong>实验性音频识别草稿</strong><p>{analysisWarnings.join(' ')}</p></div></div>}
         <div className="practice-layout"><div className="score-column"><div className="score-toolbar"><div className="score-facts"><span><Music2 size={15} />{activeTrack.key} 调</span><span>♩ {activeTrack.bpm || '待确认'}</span><span>{activeTrack.timeSignature}/4</span></div><div className="score-edit-actions"><button className="text-button" disabled={!history.length} onClick={() => { const previous = history[history.length - 1]; if (previous) { setActiveTrack(previous); setHistory(history.slice(0, -1)); } }}><RotateCcw size={14} />撤销</button><button className="text-button" onClick={() => { if (originalTrack) { updateTrack(structuredClone(originalTrack)); notify('已恢复初始和弦'); } }}>恢复原谱</button></div></div><section className="chord-sheet" aria-label="和弦时间谱"><div className="sheet-heading"><span>CHORD SHEET</span><span>点击和弦跳转 · 铅笔修改</span></div><div className="chord-grid">{activeTrack.segments.map((segment, i) => <div className={`chord-cell ${activeIndex === i ? 'current' : ''} ${segment.chord === 'N.C.' ? 'uncertain' : ''} ${loop && segment.start >= loop.start && segment.start < loop.end ? 'in-loop' : ''}`} key={segment.id}><button className="chord-seek" aria-label={`跳转到第${i + 1}段 ${displayChord(segment.chord)}`} onClick={() => seek(segment.start)}><span className="cell-number">{String(i + 1).padStart(2, '0')}</span><strong>{displayChord(segment.chord)}</strong><span className="cell-rhythm">{[0, 1, 2, 3].map(beat => <i key={beat} className={activeIndex === i && currentTime >= segment.start + (segment.end - segment.start) * beat / 4 ? 'beat-passed' : ''} />)}</span><small>{formatTime(segment.start)}</small></button><button className="cell-edit" aria-label={`修改第${i + 1}段和弦`} onClick={() => { setEditing(i); setEditChord(segment.chord); setEditStart(segment.start.toFixed(2)); setError(''); }}><Pencil size={12} /></button></div>)}</div>{!activeTrack.segments.length && <div className="empty-inline">没有可识别的和弦，请换一段音频重试。</div>}<div className="sheet-foot"><span>↓　↓ ↑　↑ ↓ ↑</span><span>右手节奏参考 · 按自己的速度练习</span></div></section><section className="track-chord-list"><div className="section-heading"><h3>这首练习用到的和弦</h3><span>{visibleChords.length} 个</span></div><div className="mini-diagrams">{visibleChords.slice(0, 16).map(chord => <ChordDiagram key={chord} chord={chord} />)}</div></section></div>
         <aside className="practice-inspector"><div className="current-chord"><span className="eyebrow">现在弹这个</span><ChordDiagram chord={activeSegment ? displayChord(activeSegment.chord) : 'N.C.'} large /><div className="next-chord">下一个 <strong>{activeTrack.segments[activeIndex + 1] ? displayChord(activeTrack.segments[activeIndex + 1].chord) : '结束'}</strong><ArrowRight size={15} /></div></div><div className="practice-settings"><h3><SlidersHorizontal size={16} />练习设置</h3><button className={`metronome-button ${metronome ? 'enabled' : ''}`} aria-pressed={metronome} disabled={!activeTrack.bpm} onClick={async () => { if (metronome) { setMetronome(false); return; } try { metronomeContext.current ??= new AudioContext(); await metronomeContext.current.resume(); lastBeat.current = -1; setMetronome(true); notify('节拍器随音频播放，按参考速度从 0 秒计拍'); } catch { notify('浏览器暂未允许节拍器音频，请重试。'); } }}><Timer size={14} />节拍器<span>{metronome ? '已开启' : '已关闭'}</span></button><div className="setting-row"><label htmlFor="capo-select">变调夹</label><select id="capo-select" value={capo} onChange={e => setCapo(Number(e.target.value))}>{Array.from({ length: 10 }, (_, i) => <option key={i} value={i}>{i === 0 ? '不用变调夹' : `第 ${i} 品`}</option>)}</select></div><div className="setting-row"><span>谱面移调</span><div className="stepper"><button aria-label="降半音" onClick={() => setTranspose(Math.max(-12, transpose - 1))}><Minus size={13} /></button><span>{transpose > 0 ? '+' : ''}{transpose}</span><button aria-label="升半音" onClick={() => setTranspose(Math.min(12, transpose + 1))}><Plus size={13} /></button></div></div>{transpose !== 0 && <p className="setting-warning">谱面已移调，原音频音高保持不变。</p>}<button className="easy-button" onClick={() => { const recommendation = getEasyCapo(activeTrack.segments.map(s => transposeChord(s.chord, transpose))); setCapo(recommendation.capo); notify(recommendation.capo ? `建议变调夹 ${recommendation.capo} 品，实际发声调性保持不变` : '当前指法已比较容易，可以不用变调夹'); }}><Sparkles size={15} />试试更容易的指法</button><p className="setting-hint">变调夹改变手上指法，保持实际发声调性。复杂和弦可能仍需横按。</p></div></aside></div>
-        <div className="player"><audio ref={audioRef} src={audioUrl || undefined} preload="metadata" onLoadedMetadata={() => { if (audioRef.current) { setDuration(audioRef.current.duration); audioRef.current.playbackRate = speed; audioRef.current.volume = volume; } }} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} onError={() => { if (audioUrl) setError('浏览器无法播放这份音频，请尝试 WAV 或 MP3 文件。'); }} /><div className="player-main"><div className="player-track-icon"><AudioLines size={22} /></div><div className="player-track-title"><strong>{activeTrack.title}</strong><small>{activeTrack.sourceKind === 'user' && activeTrack.tags.includes('识别草稿') ? '本机原音频' : '合成练习伴奏'}</small></div><div className="transport"><button className="icon-button skip-button" aria-label="上一个和弦" disabled={loadingTrack || !audioUrl} onClick={() => seek(activeTrack.segments[Math.max(0, activeIndex - 1)]?.start ?? 0)}><ChevronLeft size={21} /></button><button className="play-button" aria-label={playing ? '暂停' : '播放'} disabled={loadingTrack || !audioUrl} onClick={() => { const audio = audioRef.current; if (!audio) return; if (audio.paused) { if (audio.currentTime >= duration - .05) audio.currentTime = loop?.start ?? 0; void audio.play().catch(() => notify('播放未能启动，请重试。')); } else audio.pause(); }}>{loadingTrack ? <LoaderCircle size={22} className="spin" /> : playing ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}</button><button className="icon-button skip-button" aria-label="下一个和弦" disabled={loadingTrack || !audioUrl} onClick={() => seek(activeTrack.segments[Math.min(activeTrack.segments.length - 1, activeIndex + 1)]?.start ?? 0)}><ChevronRight size={21} /></button></div><div className="player-timeline"><span>{formatTime(currentTime)}</span><input aria-label="播放进度" type="range" min="0" max={duration || 1} step="0.05" value={Math.min(currentTime, duration || 1)} onChange={e => seek(Number(e.target.value))} /><span>{formatTime(duration)}</span></div><div className="player-options"><label className="speed-select"><select aria-label="播放速度" value={speed} onChange={e => setSpeed(Number(e.target.value))}>{[.5, .65, .75, .85, 1, 1.25].map(rate => <option key={rate} value={rate}>{rate}×</option>)}</select><ChevronDown size={12} /></label><button className={`icon-button ${loop ? 'active-control' : ''}`} aria-label={loop ? '取消循环' : loopStart !== null ? '设置循环终点 B' : '设置循环起点 A'} title={loop ? '取消循环' : loopStart !== null ? '设置终点 B' : '设置起点 A'} onClick={() => { if (loop) { setLoop(null); setLoopStart(null); notify('已取消循环'); } else if (loopStart === null) { setLoopStart(currentTime); notify(`起点 A 已设为 ${formatTime(currentTime)}，播放到终点再点击一次`); } else if (currentTime > loopStart + .3) { setLoop({ start: loopStart, end: currentTime }); seek(loopStart); setLoopStart(null); notify('A–B 分段循环已开启'); } else notify('请在起点之后设置终点 B'); }}><Repeat2 size={18} />{loopStart !== null && <i className="loop-marker">A</i>}</button><label className="volume-control"><Volume2 size={17} /><input type="range" aria-label="音量" min="0" max="1" step="0.05" value={volume} onChange={e => setVolume(Number(e.target.value))} /></label></div></div>{(loop || loopStart !== null) && <div className="loop-status">{loop ? `循环 ${formatTime(loop.start)} — ${formatTime(loop.end)}` : `已设置 A 点 ${formatTime(loopStart ?? 0)}，再次点击循环按钮设置 B 点`}</div>}</div><div className="practice-footer"><span><ShieldCheck size={13} />音频与修改仅在本机</span><span>空格 播放 / 暂停</span></div>
+        <div className="player"><audio ref={audioRef} src={audioUrl || undefined} preload="metadata" onLoadedMetadata={handleAudioReady} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} onError={() => { if (audioUrl) setError('浏览器无法播放这份音频，请尝试 WAV 或 MP3 文件。'); }} /><div className="player-main"><div className="player-track-icon"><AudioLines size={22} /></div><div className="player-track-title"><strong>{activeTrack.title}</strong><small>{audioKind === 'original' ? '本机原音频' : synthesisOutdated ? '和弦已更新 · 播放时重新合成' : '当前和弦 · 合成吉他伴奏'}</small></div><div className="transport"><button className="icon-button skip-button" aria-label="上一个和弦" disabled={loadingTrack || !audioUrl} onClick={() => seek(activeTrack.segments[Math.max(0, activeIndex - 1)]?.start ?? 0)}><ChevronLeft size={21} /></button><button className="play-button" aria-label={playing ? '暂停' : '播放'} disabled={loadingTrack || !audioUrl} onClick={() => { void togglePlayback(); }}>{loadingTrack ? <LoaderCircle size={22} className="spin" /> : playing ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}</button><button className="icon-button skip-button" aria-label="下一个和弦" disabled={loadingTrack || !audioUrl} onClick={() => seek(activeTrack.segments[Math.min(activeTrack.segments.length - 1, activeIndex + 1)]?.start ?? 0)}><ChevronRight size={21} /></button></div><div className="player-timeline"><span>{formatTime(currentTime)}</span><input aria-label="播放进度" type="range" min="0" max={duration || 1} step="0.05" value={Math.min(currentTime, duration || 1)} onChange={e => seek(Number(e.target.value))} /><span>{formatTime(duration)}</span></div><div className="player-options"><label className="speed-select"><select aria-label="播放速度" value={speed} onChange={e => setSpeed(Number(e.target.value))}>{[.5, .65, .75, .85, 1, 1.25].map(rate => <option key={rate} value={rate}>{rate}×</option>)}</select><ChevronDown size={12} /></label><button className={`icon-button ${loop ? 'active-control' : ''}`} aria-label={loop ? '取消循环' : loopStart !== null ? '设置循环终点 B' : '设置循环起点 A'} title={loop ? '取消循环' : loopStart !== null ? '设置终点 B' : '设置起点 A'} onClick={() => { if (loop) { setLoop(null); setLoopStart(null); notify('已取消循环'); } else if (loopStart === null) { setLoopStart(currentTime); notify(`起点 A 已设为 ${formatTime(currentTime)}，播放到终点再点击一次`); } else if (currentTime > loopStart + .3) { setLoop({ start: loopStart, end: currentTime }); seek(loopStart); setLoopStart(null); notify('A–B 分段循环已开启'); } else notify('请在起点之后设置终点 B'); }}><Repeat2 size={18} />{loopStart !== null && <i className="loop-marker">A</i>}</button><label className="volume-control"><Volume2 size={17} /><input type="range" aria-label="音量" min="0" max="1" step="0.05" value={volume} onChange={e => setVolume(Number(e.target.value))} /></label></div></div>{(loop || loopStart !== null) && <div className="loop-status">{loop ? `循环 ${formatTime(loop.start)} — ${formatTime(loop.end)}` : `已设置 A 点 ${formatTime(loopStart ?? 0)}，再次点击循环按钮设置 B 点`}</div>}</div><div className="practice-footer"><span><ShieldCheck size={13} />音频与修改仅在本机</span><span>空格 播放 / 暂停</span></div>
         </>}
       </div>}
     </main></div>
 
     {modal === 'upload' && <Modal title="从一段音频开始" onClose={() => { if (progress) { cancelAnalysis.current?.abort(); } setModal(null); setError(''); }}><div className="modal-description">把想练习的音频放进来，生成一份可以试听和修改的和弦草稿。</div>{progress ? <div className="analysis-progress"><div className="analysis-orb"><AudioLines size={34} /></div><h3>{progress.stage}</h3><div className="progress-track"><span style={{ width: `${progress.progress * (progress.progress <= 1 ? 100 : 1)}%` }} /></div><p>正在你的设备上处理，音频不会上传。</p><button className="button secondary" onClick={() => { cancelAnalysis.current?.abort(); }}>取消分析</button></div> : <button className="upload-dropzone" onClick={() => fileRef.current?.click()} onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); const file = e.dataTransfer.files[0]; if (file) void analyze(file); }}><span className="upload-circle"><Upload size={26} /></span><strong>点击选择，或把音频拖到这里</strong><span>MP3 / WAV · 最大 50 MB · 最长 10 分钟</span><span className="button primary">选择音频 <ArrowRight size={16} /></span></button>}{error && <div className="error-banner" role="alert">{error}</div>}<div className="upload-footnote"><ShieldCheck size={18} /><p>文件只在浏览器本机读取。基础频谱分析更适合清晰的弹唱录音；复杂编曲、转位和七和弦需要人工核对。</p></div><div className="modal-divider" /><div className="alternate-import"><span>已经有谱了？</span><button className="text-button" onClick={() => importRef.current?.click()}><FileMusic size={15} />导入和弦谱</button><button className="text-button" onClick={() => imageRef.current?.click()}><FileImage size={15} />导入图片谱</button></div></Modal>}
 
-    {modal === 'compose' && <Modal title="写下你的和弦" onClose={() => { setModal(null); setError(''); }}><p className="modal-description">输入和弦进行，生成自己的练习谱和合成伴奏。每个和弦默认一小节。</p><label className="field-label" htmlFor="compose-title">练习名称</label><input className="form-input" id="compose-title" value={composeName} onChange={e => setComposeName(e.target.value)} maxLength={120} /><label className="field-label" htmlFor="compose-chords">和弦进行</label><textarea className="form-input chord-textarea" id="compose-chords" value={composeText} onChange={e => setComposeText(e.target.value)} spellCheck={false} /><p className="muted small">用空格或换行分隔，例如 C Am F G。也支持 [C] 这样的 ChordPro 标记。</p>{error && <div className="error-banner" role="alert">{error}</div>}<button className="button primary full-width" onClick={createTrack}><Music2 size={16} />生成练习谱</button></Modal>}
+    {modal === 'compose' && <Modal title="写下你的和弦" onClose={() => { setModal(null); setError(''); }}><p className="modal-description">输入和弦，先听听合成吉他伴奏，再生成练习谱。每个和弦默认一小节。</p><label className="field-label" htmlFor="compose-title">练习名称</label><input className="form-input" id="compose-title" value={composeName} onChange={e => setComposeName(e.target.value)} maxLength={120} /><label className="field-label" htmlFor="compose-chords">和弦进行</label><textarea className="form-input chord-textarea" id="compose-chords" value={composeText} onChange={e => setComposeText(e.target.value)} spellCheck={false} /><p className="muted small">用空格或换行分隔，例如 C Am F G。也支持 [C] 这样的 ChordPro 标记。</p><div className="compose-tempo"><label htmlFor="compose-tempo">试听速度</label><select id="compose-tempo" value={composeBpm} onChange={event => setComposeBpm(Number(event.target.value))}>{[60, 72, 84, 96, 108, 120].map(bpm => <option key={bpm} value={bpm}>{bpm} BPM</option>)}</select><span>每个和弦 4 拍</span></div><ComposerPreview title={composeName} chordsText={composeText} bpm={composeBpm} />{error && <div className="error-banner" role="alert">{error}</div>}<button className="button primary full-width" onClick={createTrack}><Music2 size={16} />生成练习谱</button></Modal>}
 
-    {modal === 'export' && activeTrack && <Modal title="把练习带走" onClose={() => setModal(null)}><p className="modal-description">导出文件到自己的设备，方便备份或继续编配。</p>{!imageUrl && <><button className="export-option" onClick={() => { downloadFile(toJson(activeTrack), `${activeTrack.title}.json`, 'application/json'); notify('已导出原始调性的和弦数据'); }}><FileMusic size={24} /><span><strong>和弦数据 JSON</strong><small>保留实际发声和弦与时间位置，可重新导入</small></span><ArrowDownToLine size={17} /></button><button className="export-option" onClick={() => { downloadFile(toChordPro(activeTrack, transpose, capo), `${activeTrack.title}.cho`); notify('已导出当前指法的 ChordPro 谱'); }}><FileMusic size={24} /><span><strong>ChordPro 和弦谱</strong><small>导出当前指法，含变调夹与移调说明</small></span><ArrowDownToLine size={17} /></button>{audioBlob && <button className="export-option" onClick={() => downloadFile(audioBlob, audioBlob instanceof File ? audioBlob.name : `${activeTrack.title}.${audioBlob.type.includes('mpeg') ? 'mp3' : 'wav'}`)}><Headphones size={24} /><span><strong>练习音频</strong><small>备份当前本机音频文件</small></span><ArrowDownToLine size={17} /></button>}<button className="export-option" onClick={() => { setModal(null); setTimeout(() => window.print(), 150); }}><FileImage size={24} /><span><strong>打印 / 保存为 PDF</strong><small>通过浏览器打印谱面与指法</small></span><ExternalLink size={17} /></button></>}{imageUrl && imageBlob && <button className="export-option" onClick={() => downloadFile(imageBlob, `${activeTrack.title}.${imageBlob.type.split('/')[1] || 'png'}`)}><FileImage size={24} /><span><strong>导出原始图片谱</strong><small>保存导入的本机图片</small></span><ArrowDownToLine size={17} /></button>}</Modal>}
+    {modal === 'export' && activeTrack && <Modal title="把练习带走" onClose={() => setModal(null)}><p className="modal-description">导出文件到自己的设备，方便备份或继续编配。</p>{!imageUrl && <><button className="export-option" onClick={() => { downloadFile(toJson(activeTrack), `${activeTrack.title}.json`, 'application/json'); notify('已导出原始调性的和弦数据'); }}><FileMusic size={24} /><span><strong>和弦数据 JSON</strong><small>保留实际发声和弦与时间位置，可重新导入</small></span><ArrowDownToLine size={17} /></button><button className="export-option" onClick={() => { downloadFile(toChordPro(activeTrack, transpose, capo), `${activeTrack.title}.cho`); notify('已导出当前指法的 ChordPro 谱'); }}><FileMusic size={24} /><span><strong>ChordPro 和弦谱</strong><small>导出当前指法，含变调夹与移调说明</small></span><ArrowDownToLine size={17} /></button>{audioBlob && <button className="export-option" disabled={synthesisOutdated} onClick={() => downloadFile(audioBlob, audioBlob instanceof File ? audioBlob.name : `${activeTrack.title}.${audioBlob.type.includes('mpeg') ? 'mp3' : 'wav'}`)}><Headphones size={24} /><span><strong>练习音频</strong><small>备份当前本机音频文件</small></span><ArrowDownToLine size={17} /></button>}<button className="export-option" onClick={() => { setModal(null); setTimeout(() => window.print(), 150); }}><FileImage size={24} /><span><strong>打印 / 保存为 PDF</strong><small>通过浏览器打印谱面与指法</small></span><ExternalLink size={17} /></button></>}{imageUrl && imageBlob && <button className="export-option" onClick={() => downloadFile(imageBlob, `${activeTrack.title}.${imageBlob.type.split('/')[1] || 'png'}`)}><FileImage size={24} /><span><strong>导出原始图片谱</strong><small>保存导入的本机图片</small></span><ArrowDownToLine size={17} /></button>}</Modal>}
 
     {modal === 'help' && <Modal title="和弦记，一起慢慢练" onClose={() => setModal(null)} wide><div className="help-grid"><div><span className="help-number"><Search size={19} /></span><h3>先找到想弹的歌</h3><p>歌名和歌手可以定位站外搜索。外部曲谱需在原站确认版本；内置练习曲为原创或经典旋律的自行编配。</p></div><div><span className="help-number"><AudioLines size={19} /></span><h3>音频变成和弦草稿</h3><p>导入 MP3 或 WAV，在本机做基础频谱分析。复杂混音、七和弦和转位需要人工修正，当前没有真实流行歌准确率保证。</p></div><div><span className="help-number"><Guitar size={19} /></span><h3>按自己的速度练习</h3><p>点击和弦跳转，用铅笔改和弦，选择变调夹指法。谱面移调不会改变原音频音高，慢速播放可帮助练习。</p></div><div><span className="help-number"><ShieldCheck size={19} /></span><h3>把成果留在自己手里</h3><p>“保存曲谱”保存在本机浏览器。更换设备或清理数据前，导出 JSON 和音频备份；网站不收集你的音频。</p></div></div><div className="help-footer"><Logo /><span>让喜欢的歌，落在你的指尖。<br /><small>Stringnote · 浏览器本机练习工具</small></span></div></Modal>}
 
