@@ -291,7 +291,7 @@ export default function App() {
     updateTrack(next); setEditing(null); setError(''); notify('和弦已修改，原音频保持不变');
   }
 
-  const activeIndex = activeTrack ? Math.max(0, activeTrack.segments.findIndex(s => currentTime >= s.start && currentTime < s.end)) : 0;
+  const activeIndex = activeTrack ? activeTrack.segments.findIndex((segment, index) => currentTime >= segment.start && (currentTime < segment.end || (currentTime >= duration && index === activeTrack.segments.length - 1))) : -1;
   const activeSegment = activeTrack?.segments[activeIndex];
   const displayChord = (chord: string) => transposeChord(chord, transpose - capo);
   const visibleChords = activeTrack ? [...new Set(activeTrack.segments.map(s => displayChord(s.chord)))].filter(c => c !== 'N.C.') : [];

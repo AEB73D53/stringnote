@@ -2,6 +2,8 @@
 
 一个面向吉他弹唱的浏览器练习工具。输入想弹的歌查找曲谱来源，或者选择本机音频，生成可以试听、修改的和弦草稿，再配合指法图练习。
 
+[打开弦记网站](https://aeb73d53.github.io/stringnote/) · [查看自动发布](https://github.com/AEB73D53/stringnote/actions)
+
 项目采用 React、TypeScript 和 Vite，构建产物是静态网站，可以部署到 GitHub Pages。当前没有接入用户账户、云端私人谱库或收费 API。
 
 ## 本地运行
@@ -62,7 +64,7 @@ npm run preview  # 查看实际构建产物
 
 ## 部署到 GitHub Pages
 
-当前仓库已准备好 [Pages 工作流](.github/workflows/pages.yml)，但仅有配置文件不表示已上线。需要实际的 GitHub 仓库、推送权限以及仓库中的 Pages 设置。
+当前仓库已通过 [Pages 工作流](.github/workflows/pages.yml) 完成首次发布。以下步骤供后续重新部署或部署到自己的仓库使用；需要实际的 GitHub 仓库、推送权限以及仓库中的 Pages 设置。
 
 1. 在 GitHub 创建或选择仓库，将本项目的源文件、`package.json`、`package-lock.json` 与 `.github/workflows/pages.yml` 提交到 `main` 分支。不要提交 `node_modules/`、本机音频、秘密或私人谱库。
 2. 打开仓库 **Settings → Pages → Build and deployment**，将 **Source** 设为 **GitHub Actions**。
