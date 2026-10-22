@@ -114,7 +114,9 @@ export default function ComposerPreview({ title, chordsText, bpm }: ComposerPrev
       {preparing ? <LoaderCircle size={17} className="spin" /> : playing ? <Pause size={17} /> : <Play size={17} />}
       {preparing ? '正在生成伴奏…' : playing ? '暂停试听' : audioUrl ? '重新试听和弦' : '试听和弦'}
     </button>
-    <p className="muted small">吉他和弦伴奏，不含人声。</p>
+    <p className="muted small">木吉他音色 · 分解拨弦与轻扫弦，不含人声。<br />
+      <a href={`${import.meta.env.BASE_URL}audio/LICENSE.md`} target="_blank" rel="noopener noreferrer">音色来源与许可</a>
+    </p>
     <audio
       ref={audioRef}
       controls

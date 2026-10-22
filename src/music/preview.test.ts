@@ -26,6 +26,7 @@ describe('synthesis preview identity and pitch', () => {
     expect(synthesisSignature(edited)).not.toBe(signature);
     expect(synthesisSignature(structuredClone(original))).toBe(signature);
     expect(synthesisSignature({ ...original, bpm: original.bpm + 4 })).not.toBe(signature);
+    expect(synthesisSignature({ ...original, timeSignature: 3 })).not.toBe(signature);
     expect(synthesisSignature({ ...original, melody: [62, 0, 64, 67] })).not.toBe(signature);
     expect(synthesisSignature(original, 12)).not.toBe(signature);
   });

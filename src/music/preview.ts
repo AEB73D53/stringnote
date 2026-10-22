@@ -2,7 +2,7 @@ import type { SavedPractice } from '../lib/storage';
 import type { PracticeTrack } from '../types';
 import { transposeChord } from './theory';
 
-const SYNTH_VERSION = 'stringnote-pluck-v1';
+const SYNTH_VERSION = 'stringnote-acoustic-guitar-v2';
 
 /** Preserve octave shifts: melody +12 is audibly different from melody +0. */
 function normalizedTranspose(transpose: number): number {
@@ -14,6 +14,7 @@ export function synthesisSignature(track: PracticeTrack, transpose = 0): string 
   return JSON.stringify({
     synthVersion: SYNTH_VERSION,
     bpm: track.bpm,
+    timeSignature: track.timeSignature,
     duration: track.duration,
     segments: track.segments.map(segment => [segment.start, segment.end, segment.chord]),
     melody: track.melody ?? [],

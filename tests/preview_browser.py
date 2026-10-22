@@ -16,6 +16,12 @@ def audio_hash(page, selector='audio'):
         return Array.from(new Uint8Array(digest), x => x.toString(16).padStart(2, '0')).join('');
     }''')
 
+def wait_for_new_playback(page, previous_source):
+    page.wait_for_function('''previous => {
+        const audio = document.querySelector('.player audio');
+        return audio && audio.src !== previous && !audio.paused && audio.currentTime > .1;
+    }''', arg=previous_source)
+
 def run():
     prepare_fixture()
     results = {'url': BASE}
@@ -58,17 +64,19 @@ def run():
         page.wait_for_function('document.querySelector(".player audio").currentTime > .1')
         first_track_hash = audio_hash(page, '.player audio')
         page.get_by_role('button', name='暂停试听').click()
+        previous_source = page.locator('.player audio').evaluate('audio => audio.src')
         page.get_by_label('修改第1段和弦').click()
         page.get_by_label('实际发声和弦').fill('G7')
         page.get_by_role('button', name='保存修改', exact=True).click()
         expect(page.locator('.audition-bar')).to_contain_text('和弦或调性已修改')
         page.get_by_role('button', name='试听和弦', exact=True).click()
-        page.wait_for_function('document.querySelector(".player audio").currentTime > .1')
+        wait_for_new_playback(page, previous_source)
         assert audio_hash(page, '.player audio') != first_track_hash
         page.get_by_role('button', name='暂停试听').click()
+        previous_source = page.locator('.player audio').evaluate('audio => audio.src')
         page.get_by_role('button', name='撤销', exact=True).click()
         page.get_by_role('button', name='试听和弦', exact=True).click()
-        page.wait_for_function('document.querySelector(".player audio").currentTime > .1')
+        wait_for_new_playback(page, previous_source)
         assert audio_hash(page, '.player audio') == first_track_hash
         results['updatedChordsAreAudible'] = True
         page.screenshot(path=str(OUT / 'practice-audition.png'), full_page=True)
