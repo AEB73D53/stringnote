@@ -2,7 +2,11 @@
 
 一个面向吉他弹唱的浏览器练习工具。输入想弹的歌查找曲谱来源，或者选择本机音频，生成可以试听、修改的和弦草稿，再配合指法图练习。
 
-[打开弦记网站](https://aeb73d53.github.io/stringnote/) · [查看自动发布](https://github.com/AEB73D53/stringnote/actions)
+[打开弦记网站](https://aeb73d53.github.io/stringnote/) · **[完整图文使用指南（新手先看）](USER_GUIDE.md)** · [查看自动发布](https://github.com/AEB73D53/stringnote/actions)
+
+第一次使用：打开网站 → **自己写和弦** → 输入 `C Am F G` → **试听和弦**。想边听边看谱，点击“生成练习谱”；想下次继续，点击“保存曲谱”。
+
+[完整指南](USER_GUIDE.md) 逐步说明找谱、写和弦、导入录音、试听、编辑、移调、变调夹、循环、保存、导出与图片谱，并配有实际界面截图和常见问题。不需要先阅读下面的开发与部署说明。
 
 项目采用 React、TypeScript 和 Vite，构建产物是静态网站，可以部署到 GitHub Pages。当前没有接入用户账户、云端私人谱库或收费 API。
 
