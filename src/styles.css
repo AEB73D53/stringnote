@@ -27,3 +27,5 @@
 
 .help-start{padding:20px 22px;margin:0 0 25px;background:#f3f6ff;border:1px solid #dce4f8;border-radius:11px}.help-start h3{font-size:19px;line-height:1.6;color:#526599;margin:10px 0}.help-start ol{padding-left:22px;margin:12px 0 18px;color:#7384a5;font-size:12px;line-height:1.9}.help-start li+li{margin-top:7px}.help-start code{font-family:Consolas,monospace;color:#536bc1;background:#e8edff;border-radius:4px;padding:2px 5px}.help-start>.button{display:inline-flex;min-height:42px;gap:9px;font-size:12px}.help-start>p{font-size:11px;line-height:1.8;color:#8997b1;margin:12px 0 0}
 @media(max-width:600px){.help-start{padding:17px 16px}.help-start h3{font-size:17px}.help-start>.button{width:100%;justify-content:center}.help-start ol{font-size:12px}}
+
+.pitch-summary{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:7px;padding:11px 7px;margin:15px 0;background:#eef2ff;border:1px solid #dce3fa;border-radius:7px;color:#8291b4;font-size:11px;line-height:1.6}.pitch-summary strong{color:#566cc0;font-size:17px;font-weight:500}

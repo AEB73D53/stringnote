@@ -1,8 +1,9 @@
 import type { SavedPractice } from '../lib/storage';
 import type { PracticeTrack } from '../types';
 import { transposeChord } from './theory';
+import { capoFret } from './pitch';
 
-const SYNTH_VERSION = 'stringnote-acoustic-guitar-v2';
+const SYNTH_VERSION = 'stringnote-acoustic-guitar-capo-v3';
 
 /** Preserve octave shifts: melody +12 is audibly different from melody +0. */
 function normalizedTranspose(transpose: number): number {
@@ -10,7 +11,7 @@ function normalizedTranspose(transpose: number): number {
 }
 
 /** A stable identity for sound-producing inputs, independent of display metadata. */
-export function synthesisSignature(track: PracticeTrack, transpose = 0): string {
+export function synthesisSignature(track: PracticeTrack, transpose = 0, capo = 0): string {
   return JSON.stringify({
     synthVersion: SYNTH_VERSION,
     bpm: track.bpm,
@@ -19,10 +20,11 @@ export function synthesisSignature(track: PracticeTrack, transpose = 0): string 
     segments: track.segments.map(segment => [segment.start, segment.end, segment.chord]),
     melody: track.melody ?? [],
     normalizedTranspose: normalizedTranspose(transpose),
+    capo: capoFret(capo),
   });
 }
 
-/** Create sounding pitches for preview; capo only changes the displayed fingering. */
+/** Prepare the fingering transposition; the renderer raises these strings by the capo. */
 export function trackForSynthesis(track: PracticeTrack, transpose = 0): PracticeTrack {
   const shifted = structuredClone(track);
   const semitones = normalizedTranspose(transpose);

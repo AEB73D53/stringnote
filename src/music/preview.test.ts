@@ -29,9 +29,13 @@ describe('synthesis preview identity and pitch', () => {
     expect(synthesisSignature({ ...original, timeSignature: 3 })).not.toBe(signature);
     expect(synthesisSignature({ ...original, melody: [62, 0, 64, 67] })).not.toBe(signature);
     expect(synthesisSignature(original, 12)).not.toBe(signature);
+    expect(synthesisSignature(original, 0, 2)).not.toBe(signature);
+    // The same key played with a different grip/capo has different string notes.
+    expect(synthesisSignature(original, 0, 2)).not.toBe(synthesisSignature(original, 2, 0));
+    expect(synthesisSignature(original, 0, NaN)).toBe(signature);
   });
 
-  it('transposes actual chords, slash bass, melody and key without applying capo or mutating the source', () => {
+  it('prepares transposed fingerings, bass and melody for the renderer without mutating the source', () => {
     const original = example();
     original.segments[0].chord = 'C/G'; original.segments[1].chord = 'N.C.';
     Object.assign(original, { capo: 5 });

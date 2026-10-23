@@ -45,18 +45,20 @@ def run():
 
         original = page.locator('.chord-cell').nth(1).locator('strong').inner_text()
         page.get_by_label('修改第2段和弦').click()
-        page.get_by_label('实际发声和弦').fill('Dm')
+        page.get_by_label('基础和弦').fill('Dm')
         page.get_by_role('button', name='保存修改', exact=True).click()
         expect(page.locator('.chord-cell').nth(1).locator('strong')).to_have_text('Dm')
         page.get_by_role('button', name='撤销', exact=True).click()
         expect(page.locator('.chord-cell').nth(1).locator('strong')).to_have_text(original)
         page.get_by_label('修改第2段和弦').click()
-        page.get_by_label('实际发声和弦').fill('Dm')
+        page.get_by_label('基础和弦').fill('Dm')
         page.get_by_role('button', name='保存修改', exact=True).click()
         page.get_by_role('button', name='升半音').click()
         expect(page.locator('.chord-cell').first.locator('strong')).to_have_text('C#')
         page.get_by_label('变调夹', exact=True).select_option('2')
-        expect(page.locator('.chord-cell').first.locator('strong')).to_have_text('B')
+        # A manually moved capo raises the sounding chord; the chosen hand
+        # shape stays unchanged, as it does on a real guitar.
+        expect(page.locator('.chord-cell').first.locator('strong')).to_have_text('C#')
         page.get_by_role('button', name='节拍器', exact=False).click()
         expect(page.get_by_role('button', name='节拍器', exact=False)).to_have_attribute('aria-pressed', 'true')
         results['editingTransposeCapoMetronome'] = True

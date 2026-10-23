@@ -66,7 +66,7 @@ def run():
         page.get_by_role('button', name='暂停试听').click()
         previous_source = page.locator('.player audio').evaluate('audio => audio.src')
         page.get_by_label('修改第1段和弦').click()
-        page.get_by_label('实际发声和弦').fill('G7')
+        page.get_by_label('基础和弦').fill('G7')
         page.get_by_role('button', name='保存修改', exact=True).click()
         expect(page.locator('.audition-bar')).to_contain_text('和弦或调性已修改')
         page.get_by_role('button', name='试听和弦', exact=True).click()

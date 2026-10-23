@@ -1,5 +1,6 @@
 import type { PracticeTrack } from '../types';
 import { guitarVoicing } from './guitar';
+import { capoFret } from './pitch';
 import { loadGuitarSamples, type GuitarSample } from './sampleBank';
 
 const SAMPLE_RATE = 22050;
@@ -82,7 +83,7 @@ export function encodeWav(samples: Float32Array, sampleRate = SAMPLE_RATE): Blob
   return new Blob([data], { type: 'audio/wav' });
 }
 
-export async function renderTrackAudio(track: PracticeTrack): Promise<Blob> {
+export async function renderTrackAudio(track: PracticeTrack, capo = 0): Promise<Blob> {
   if (!Number.isFinite(track.duration) || track.duration <= 0 || track.duration > 600) {
     throw new Error('练习曲时长应在 0 到 600 秒之间。');
   }
@@ -96,13 +97,16 @@ export async function renderTrackAudio(track: PracticeTrack): Promise<Blob> {
     lastEnd = segment.end;
   }
   const buffer = new Float32Array(Math.ceil(track.duration * SAMPLE_RATE));
+  const fret = capoFret(capo);
   const bank = await loadGuitarSamples();
   const modeled = new Map<number, GuitarSample>();
   const bpm = Number.isFinite(track.bpm) && track.bpm > 0 ? Math.max(20, Math.min(300, track.bpm)) : 84;
   const beat = 60 / bpm;
   for (let index = 0; index < track.segments.length; index++) {
     const segment = track.segments[index];
-    const notes = guitarVoicing(segment.chord);
+    // A physical capo raises every string of the same hand shape. Transposing
+    // the chord name first could pick a different, lower open-string voicing.
+    const notes = guitarVoicing(segment.chord).map(midi => midi + fret);
     if (!notes.length) continue;
     const duration = segment.end - segment.start;
     // An even thumb/fingers pattern, with lighter offbeats and a gentle brush
@@ -133,7 +137,7 @@ export async function renderTrackAudio(track: PracticeTrack): Promise<Blob> {
   track.melody?.forEach((midi, index) => {
     if (midi <= 0 || index * beat >= track.duration) return;
     const held = track.melody?.[index + 1] === 0 ? beat * 1.75 : beat * 0.9;
-    pluck(buffer, midi + 12, index * beat + 0.01, held, 0.72, bank, modeled);
+    pluck(buffer, midi + 12 + fret, index * beat + 0.01, held, 0.72, bank, modeled);
   });
   let peak = 0;
   for (let index = 0; index < buffer.length; index++) peak = Math.max(peak, Math.abs(buffer[index]));
